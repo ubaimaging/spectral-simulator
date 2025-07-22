@@ -2,11 +2,14 @@
 # Description: Application of the method for generating spectral data to simulate:
 # 1. Spectra of pure components and their associated calibration images
 # 2. Study images (mixtures of spectral components)
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import numpy as np
 import matplotlib.pyplot as plt
 import math
-from simulator import (
+from simulator.simulator import (
     generate_spectra, 
     distribute_photons, 
     generate_random_fractions
