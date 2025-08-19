@@ -3,56 +3,90 @@ from numpy.typing import ArrayLike, NDArray
 
 from scipy.stats import gaussian_kde
 
-from typing import Any
+from typing import Any, Tuple, Optional
 
 
 def generate_spectra(
-        Nph: int,
-        sigm: float,
-        off: float,
-        pha: float,
-        rang: ArrayLike,
-        /,
-) -> NDArray[Any]:
+    Nph: int,
+    off: float,
+    pha: float,
+    rang: ArrayLike,
+    sigm: float = 1.0,
+    lam: Optional[float] = None,
+    seed: Optional[int] = None,
+    clip_to_range: bool = False,
+) -> Tuple[NDArray[numpy.int64], NDArray[numpy.float64], int]:
     """
-    Generates a spectral profile with a Gaussian distribution, given a number of photons 
-    distributed over a wavelength range.
+    Generate a spectral histogram (counts per bin) over the wavelength range `rang`.
+
+    Modes
+    -----
+    - Normal mode (lam is None): draw Nph samples from Normal(mean, sigm),
+      where mean = center(rang) + off + pha.
+    - Poisson mode (lam is not None): draw Nph samples from Poisson(lam) and
+      shift by off + pha. (Note: this treats Poisson as a sampler over 'wavelength-like'
+      integers; for physically accurate photon counting per bin, prefer drawing Poisson
+      counts per bin from an expected spectrum.)
 
     Parameters
     ----------
     Nph : int
-        Number of photons that the spectrum should contain.
-    sigm : float
-        Standard deviation of the distribution.
+        Number of samples (photons) to draw before histogramming.
     off : float
-        Shift of the distribution mean, relative to the center of the 'rang' vector.
+        Shift relative to the center of `rang` (in wavelength units).
     pha : float
-        Adjustment factor for the phasor position.
-    rang : list or ndarray
-        Range of wavelengths over which the signal is represented.
+        Additional shift term (documented as phasor adjustment; here applied linearly).
+    rang : array-like
+        Monotonic array of bin edges (length B+1).
+    sigm : float, default=1.0
+        Standard deviation in Normal mode (must be > 0).
+    lam : float or None, default=None
+        Poisson mean in Poisson mode (must be > 0 if provided).
+    seed : int or None
+        Random seed for reproducibility.
+    clip_to_range : bool, default=False
+        If True, clip samples to [rang[0], rang[-1]] before histogramming;
+        otherwise, samples outside the range are dropped by numpy.histogram.
 
     Returns
     -------
-    spectra : ndarray
-        A vector containing the spectral profile with the Nph photons distributed
-        within the spectral range defined by 'rang'.
+    spectra : (B,) int64 ndarray
+        Counts per bin.
+    bin_edges : (B+1,) float64 ndarray
+        The bin edges actually used (np.asarray(rang, float)).
+    lost : int
+        Number of samples that fell outside the range (0 if clip_to_range=True).
     """
-    # Parameter validation
     if Nph <= 0:
-        raise ValueError("The number of photons 'Nph' must be a positive integer.")
-    
-    if sigm < 0:
-        raise ValueError("The 'sigm' parameter must be a positive value.")
-    
-    if len(rang) < 2:
-        raise ValueError("The 'rang' parameter must be an array with at least two elements.")
+        raise ValueError("Nph must be a positive integer.")
+    rang = numpy.asarray(rang, dtype=float)
+    if rang.ndim != 1 or rang.size < 2:
+        raise ValueError("'rang' must be a 1D array of at least 2 edges.")
+    if not numpy.all(numpy.diff(rang) > 0):
+        raise ValueError("'rang' must be strictly increasing.")
 
-    # Generate photons with a normal distribution
-    wavelengths = numpy.random.randn(Nph) * sigm + pha + off
-    
-    # Create the histogram of the spectrum over the given range
-    spectra, _ = numpy.histogram(wavelengths, bins=rang)
-    return spectra
+    rng = numpy.random.default_rng(seed)
+    mean = (rang[0] + rang[-1]) / 2.0 + off + pha
+
+    if lam is None:
+        if sigm <= 0:
+            raise ValueError("In Normal mode, 'sigm' must be > 0.")
+        samples = rng.normal(loc=mean, scale=sigm, size=Nph)
+    else:
+        if lam <= 0:
+            raise ValueError("In Poisson mode, 'lam' must be > 0.")
+        # Poisson returns integers around lam; shift to wavelength-like values
+        samples = rng.poisson(lam=lam, size=Nph).astype(float) + (off + pha)
+
+    if clip_to_range:
+        samples = numpy.clip(samples, rang[0], rang[-1])
+        lost = 0
+    else:
+        # Count how many fall outside before histogramming (for bookkeeping)
+        lost = int(numpy.sum((samples < rang[0]) | (samples > rang[-1])))
+
+    spectra, edges = numpy.histogram(samples, bins=rang)
+    return spectra.astype(numpy.int64), edges.astype(numpy.float64), lost
 
 
 
