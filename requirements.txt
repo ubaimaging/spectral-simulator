@@ -1,2 +1,3 @@
 numpy
 matplotlib
+phasorpy>=0.8
